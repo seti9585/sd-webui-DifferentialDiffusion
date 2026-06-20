@@ -72,8 +72,9 @@ class DifferentialDiffusionScript(scripts.Script):
         with gr.Accordion(open=False, label=self.title()):
             gr.HTML(
                 "<p><i>"
-                "Applies a per-pixel denoising schedule based on mask density. "
-                "Brighter mask areas denoise more; darker areas denoise less."
+                "<b>Denoise Mask Function</b>: Applies a per-pixel denoising schedule "
+                "based on mask density. Brighter mask areas denoise more; darker areas denoise less. "
+                "Requires Forge backend."
                 "</i></p>"
             )
             enabled = gr.Checkbox(label="Enable Differential Diffusion", value=False)
@@ -108,7 +109,9 @@ class DifferentialDiffusionScript(scripts.Script):
             return
 
         if not _has_forge_backend(p):
-            logger.warning("[DifferentialDiffusion] Requires Forge backend.")
+            msg = "[DifferentialDiffusion] Requires Forge backend."
+            logger.warning(msg)
+            print(msg, file=sys.stderr)
             return
 
         unet = p.sd_model.forge_objects.unet.clone()
