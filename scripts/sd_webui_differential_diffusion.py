@@ -84,26 +84,62 @@ class DifferentialDiffusionScript(scripts.Script):
                 info="1.0 = full binary mask (original). Lower values blend with the continuous mask.",
             )
 
-        enabled.change(fn=lambda x: self._update_enabled(x), inputs=[enabled])
+        # Infotext round-trip (PNG Info -> Send to txt2img / img2img).
+        # Enable is bound through a callable matching the existing
+        # "differential_diffusion" key (value "enabled"); a missing key resolves
+        # to False so an image generated without it forces OFF, as required for
+        # faithful same-seed reproduction. The strength uses a plain key. The
+        # metadata write lives in process() (see below).
+        #
+        # NOTE: no enabled.change() listener is registered. The previous version
+        # synced an instance flag via change(), but that value was always
+        # overwritten by the UI args read during sampling, so it was dead code.
+        self.infotext_fields = [
+            (enabled,  lambda d: d.get("differential_diffusion", "") == "enabled"),
+            (strength, "differential_diffusion_strength"),
+        ]
+
         return [enabled, strength]
 
-    def _update_enabled(self, value: bool) -> None:
-        self.enabled = value
+    # ------------------------------------------------------------------
+    # Effective configuration (UI args + XYZ Grid override)
+    # ------------------------------------------------------------------
+
+    def _resolve(self, p, args):
+        enabled  = bool(args[0])  if len(args) >= 1 else False
+        strength = float(args[1]) if len(args) >= 2 else 1.0
+
+        xyz = getattr(p, "_dd_xyz", {})
+        if "enabled"  in xyz: enabled  = (xyz["enabled"] == "True")
+        if "strength" in xyz: strength = float(xyz["strength"])
+
+        return enabled, strength
+
+    # ------------------------------------------------------------------
+    # Metadata write (runs once before sampling so create_infotext captures it)
+    # ------------------------------------------------------------------
+
+    def process(self, p, *args):
+        if len(args) < 1:
+            return
+        enabled, strength = self._resolve(p, args)
+        if not enabled:
+            return
+        p.extra_generation_params.update({
+            "differential_diffusion": "enabled",
+            "differential_diffusion_strength": strength,
+        })
+
+    # ------------------------------------------------------------------
+    # Hook application (correct timing for forge_objects.unet)
+    # ------------------------------------------------------------------
 
     def process_before_every_sampling(self, p, *args, **kwargs):
-        if len(args) >= 2:
-            self.enabled  = bool(args[0])
-            self.strength = float(args[1])
-        elif len(args) == 1:
-            self.enabled  = bool(args[0])
-        else:
+        if len(args) < 1:
             logger.warning("[DifferentialDiffusion] process_before_every_sampling: missing args")
             return
 
-        # XYZ Grid
-        xyz = getattr(p, "_dd_xyz", {})
-        if "enabled"  in xyz: self.enabled  = (xyz["enabled"] == "True")
-        if "strength" in xyz: self.strength = float(xyz["strength"])
+        self.enabled, self.strength = self._resolve(p, args)
 
         if not self.enabled:
             return
@@ -117,11 +153,6 @@ class DifferentialDiffusionScript(scripts.Script):
         unet = p.sd_model.forge_objects.unet.clone()
         apply_differential_diffusion(unet, strength=self.strength)
         p.sd_model.forge_objects.unet = unet
-
-        p.extra_generation_params.update({
-            "differential_diffusion": "enabled",
-            "differential_diffusion_strength": self.strength,
-        })
         logger.debug("[DifferentialDiffusion] applied (strength=%.2f)", self.strength)
 
 
